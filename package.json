@@ -3,8 +3,20 @@
     "start": "nodemon index.js"
   },
   "dependencies": {
+    "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "express": "^4.21.1",
-    "nodemon": "^3.1.7"
-  }
+    "jsonwebtoken": "^9.0.2",
+    "nodemon": "^3.1.7",
+    "pg": "^8.13.1",
+    "sequelize": "^6.37.5",
+    "sequelize-cli": "^6.6.2"
+  },
+  "name": "back-end",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "https://github.com/fndsjy/BE-Halloween-POS.git",
+  "author": "fndsjy <fendysanjaya40@gmail.com>",
+  "license": "MIT"
 }

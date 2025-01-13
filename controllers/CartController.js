@@ -1,18 +1,26 @@
 const ApplicationController = require('./ApplicationController');
-const { menu } = require('../data/menu'); // Produk yang tersedia
 
 class CartController extends ApplicationController {
-  constructor() {
+  constructor(cartItemModel, productModel) {
     super();
-    this.cart = [];
+    this.cartItemModel = cartItemModel;
+    this.productModel = productModel;
   }
 
   // Mendapatkan seluruh item di keranjang
-  handleGetCart = (req, res) => {
-    res.status(200).json({
-      status: 'Success',
-      cart: this.cart
-    });
+  handleGetCart = async (req, res) => {
+    try {
+      const cart = await this.cartItemModel.findAll({ include: this.productModel });
+      res.status(200).json({
+        status: 'Success',
+        cart
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'error',
+        message: error.message
+      });
+    }
   };
 
   // Menambahkan produk ke keranjang
@@ -26,158 +34,162 @@ class CartController extends ApplicationController {
       });
     }
 
-    const product = menu.find(item => item.productId === productId);
+    try {
+      const product = await this.productModel.findByPk(productId);
+      if (!product) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Product not found.'
+        });
+      }
 
-    if (!product) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Product not found.'
+      if (quantity > product.maxStockCanBeMade) {
+        return res.status(400).json({
+          status: 'error',
+          message: `Only ${product.maxStockCanBeMade} units available for this product.`
+        });
+      }
+
+      const [cartItem, created] = await this.cartItemModel.findOrCreate({
+        where: { productId },
+        defaults: { quantity }
       });
-    }
 
-    if (quantity > product.maxStockCanBeMade) {
-      return res.status(400).json({
-        status: 'error',
-        message: `Only ${product.maxStockCanBeMade} units available for this product.`
-      });
-    }
+      if (!created) {
+        cartItem.quantity += quantity;
+        await cartItem.save();
+      }
 
-    // Tambah atau update item di keranjang
-    const cartItem = this.cart.find(item => item.productId === productId);
-    if (cartItem) {
-      cartItem.quantity += quantity; // Update jumlah
-      product.maxStockCanBeMade -= quantity; // Update stok maksimum produk di menu
-      cartItem.maxStockCanBeMade = product.maxStockCanBeMade; // Update stok maksimum di cart
-    } else {
-      // Update stok maksimum produk di menu dan tambahkan ke keranjang
       product.maxStockCanBeMade -= quantity;
-      this.cart.push({ ...product, quantity, maxStockCanBeMade: product.maxStockCanBeMade });
-    }
+      await product.save();
 
-    res.status(200).json({
-      status: 'Success adding product to cart.',
-      cart: this.cart
-    });
+      res.status(200).json({
+        status: 'Success adding product to cart.',
+        cartItem
+      });
+    } catch (error) {
+      res.status(500).json({
+        status: 'error',
+        message: error.message
+      });
+    }
   };
 
   handleUpdateCartItemQuantity = async (req, res) => {
     const { productId, action } = req.body;
-  
+
     if (!productId || !action) {
       return res.status(400).json({
         status: 'error',
         message: 'Invalid product ID or action.'
       });
     }
-  
-    const cartItem = this.cart.find(item => item.productId === productId);
-    const product = menu.find(item => item.productId === productId);
-  
-    if (!cartItem || !product) {
-      return res.status(404).json({
+
+    try {
+      const cartItem = await this.cartItemModel.findOne({ where: { productId } });
+      const product = await this.productModel.findByPk(productId);
+
+      if (!cartItem || !product) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Item not found in cart or product not available.'
+        });
+      }
+
+      if (action === 'add') {
+        if (product.maxStockCanBeMade > 0) {
+          cartItem.quantity += 1;
+          product.maxStockCanBeMade -= 1;
+        } else {
+          return res.status(400).json({
+            status: 'error',
+            message: 'No stock available.'
+          });
+        }
+      } else if (action === 'subtract') {
+        if (cartItem.quantity > 1) {
+          cartItem.quantity -= 1;
+          product.maxStockCanBeMade += 1;
+        } else {
+          return res.status(400).json({
+            status: 'error',
+            message: 'Cannot reduce quantity below 1.'
+          });
+        }
+      }
+
+      await cartItem.save();
+      await product.save();
+
+      res.status(200).json({
+        status: 'Success updating cart item quantity.',
+        cartItem
+      });
+    } catch (error) {
+      res.status(500).json({
         status: 'error',
-        message: 'Item not found in cart or product not available.'
+        message: error.message
       });
     }
-  
-    let newQuantity = cartItem.quantity;
-    const maxStockAvailable = product.maxStockCanBeMade;
-  
-    if (action === "add") {
-      if (maxStockAvailable > 0) {
-        newQuantity += 1;  // Menambah satu unit
-        product.maxStockCanBeMade -= 1; // Kurangi stok produk
-      } else {
-        return res.status(400).json({
-          status: 'error',
-          message: `Only ${maxStockAvailable} units available for this product.`
-        });
-      }
-    } else if (action === "subtract") {
-      if (newQuantity > 1) {
-        newQuantity -= 1;  // Mengurangi satu unit
-        product.maxStockCanBeMade += 1; // Kembalikan stok produk
-      } else {
-        return res.status(400).json({
-          status: 'error',
-          message: 'Cannot reduce quantity below 1.'
-        });
-      }
-    }
-  
-    // Update kuantitas produk di keranjang dan stok produk
-    cartItem.quantity = newQuantity;
-    cartItem.maxStockCanBeMade = product.maxStockCanBeMade;
-  
-    res.status(200).json({
-      status: 'Success updating cart item quantity.',
-      cart: this.cart
-    });
-  };  
+  };
 
-  // Menghapus item dari keranjang
-  handleDeleteCartItem = (req, res) => {
+  handleDeleteCartItem = async (req, res) => {
     const { productId } = req.params;
-    const product = menu.find(item => item.productId === parseInt(productId, 10));
 
-    if (!product) {
-      return res.status(404).json({
+    try {
+      const cartItem = await this.cartItemModel.findOne({ where: { productId } });
+      const product = await this.productModel.findByPk(productId);
+
+      if (!cartItem || !product) {
+        return res.status(404).json({
+          status: 'error',
+          message: 'Item not found in cart or product not available.'
+        });
+      }
+
+      product.maxStockCanBeMade += cartItem.quantity;
+      await product.save();
+
+      await cartItem.destroy();
+
+      res.status(200).json({
+        status: 'Success deleting item from cart.'
+      });
+    } catch (error) {
+      res.status(500).json({
         status: 'error',
-        message: 'Product not found.'
+        message: error.message
       });
     }
-
-    const itemIndex = this.cart.findIndex(item => item.productId === parseInt(productId, 10));
-
-    if (itemIndex === -1) {
-      return res.status(404).json({
-        status: 'error',
-        message: 'Item not found in cart.'
-      });
-    }
-
-    // Kembalikan stok maksimum saat menghapus dari keranjang
-    const cartItem = this.cart[itemIndex];
-    product.maxStockCanBeMade += cartItem.quantity;
-
-    // Hapus item dari keranjang
-    this.cart.splice(itemIndex, 1);
-
-    res.status(200).json({
-      status: 'Success deleting item from cart.',
-      cart: this.cart
-    });
   };
 
   handleCheckout = async (req, res) => {
     try {
-      // Proses setiap item dalam keranjang
-      this.cart.forEach(cartItem => {
-        const product = menu.find(item => item.productId === cartItem.productId);
-  
+      const cartItems = await this.cartItemModel.findAll();
+
+      for (const cartItem of cartItems) {
+        const product = await this.productModel.findByPk(cartItem.productId);
         if (!product) {
           return res.status(404).json({
             status: 'error',
             message: `Product with ID ${cartItem.productId} not found in menu.`
           });
         }
-      });
-  
-      // Clear cart setelah checkout berhasil
-      this.cart = [];
-  
+      }
+
+      await this.cartItemModel.destroy({ where: {} });
+
       res.status(200).json({
         status: 'Success',
-        message: 'Checkout successful. Cart has been cleared.',
-        cart: this.cart
+        message: 'Checkout successful. Cart has been cleared.'
       });
     } catch (error) {
       res.status(500).json({
         status: 'error',
-        message: error.message || 'An unexpected error occurred during checkout.'
+        message: error.message
       });
     }
-  };  
+  };
 }
 
 module.exports = CartController;
